@@ -1,0 +1,801 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>WebGL 2.0 Escena</title>
+  <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+</head>
+   <body>
+      <canvas id="webglcanvas" style="border: none;" width="500" height="500"></canvas>
+      <!--
+        /***************************************************************************/
+        /* Paso 1: Se definen los códigos shaders.                                 */
+        /***************************************************************************/
+      -->
+      <script id="vs" type="vertex">
+        #version 300 es
+        precision mediump float;
+        uniform mat4 uMatrizProyeccion;
+        uniform mat4 uMatrizVistaModelo;
+        layout(location = 0) in vec2 aVertices;
+        layout(location = 1) in vec4 aColores;
+	out vec4 vColores;
+        void main() {
+            vColores = aColores;  
+            gl_Position = uMatrizProyeccion * uMatrizVistaModelo * vec4(aVertices, 0.0, 1.0);
+        }
+      </script>
+
+      <script id="fs" type="fragment">
+        #version 300 es
+        precision mediump float;
+        in vec4 vColores;
+        out vec4 color;
+        void main() {
+            color = vColores;
+        }
+      </script>
+	
+      <script>
+
+        /***************************************************************************/
+        /* Paso 2: Se prepara el lienzo y se obtiene el contexto del WebGL.        */
+        /***************************************************************************/
+        const inicia = () => {
+          var canvas = document.getElementById("webglcanvas");
+	  var gl = canvas.getContext("webgl2");
+          if (!gl) {
+             document.write("WebGL 2.0 no está disponible en tu navegador");
+             return null;
+          }
+
+          /* Se define la ventana de despliegue */
+          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+          return gl;
+        }
+
+        var programaID
+
+        /***************************************************************************/
+        /* Paso 3: Se crean, compilan y enlazan los programas Shader               */
+        /***************************************************************************/
+        const compilaEnlazaLosShaders = gl => {
+
+          /* Se compila el shader de vertice */
+          var shaderDeVertice = gl.createShader(gl.VERTEX_SHADER);
+          gl.shaderSource(shaderDeVertice, document.getElementById("vs").text.trim());
+          gl.compileShader(shaderDeVertice);
+          if (!gl.getShaderParameter(shaderDeVertice, gl.COMPILE_STATUS)) {
+             console.error(gl.getShaderInfoLog(shaderDeVertice));
+          }
+
+          /* Se compila el shader de fragmento */
+          var shaderDeFragmento = gl.createShader(gl.FRAGMENT_SHADER);
+          gl.shaderSource(shaderDeFragmento, document.getElementById("fs").text.trim());
+          gl.compileShader(shaderDeFragmento);
+          if (!gl.getShaderParameter(shaderDeFragmento, gl.COMPILE_STATUS)) {
+             console.error(gl.getShaderInfoLog(shaderDeFragmento));
+          }
+
+          /* Se enlaza ambos shader */
+          programaID = gl.createProgram();
+          gl.attachShader(programaID, shaderDeVertice); 
+          gl.attachShader(programaID, shaderDeFragmento);
+          gl.linkProgram(programaID);
+          if (!gl.getProgramParameter(programaID, gl.LINK_STATUS)) {
+             console.error(gl.getProgramInfoLog(programaID));
+          }
+        }
+
+        /***************************************************************************/
+        /* Transformación de las Matrices
+        /***************************************************************************/
+
+        var MatrizModelo = new Array(16);
+        var MatrizProyeccion = new Array(16);
+
+        /* Matriz Identidad */
+        function identidad(r) {
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = 0;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = 0;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = 0;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] = 1;
+        }
+
+        /* Proyección Paralela - glOrtho */
+        function ortho(r, izq, der, abj, arr, cerca, lejos) {
+          r[0] = 2/(der - izq); r[4] =             0; r[ 8] =                  0; r[12] =         -(der + izq)/(der - izq);
+          r[1] =             0; r[5] = 2/(arr - abj); r[ 9] =                  0; r[13] =         -(arr + abj)/(arr - abj);
+          r[2] =             0; r[6] =             0; r[10] = -2/(lejos - cerca); r[14] = -(lejos + cerca)/(lejos - cerca);
+          r[3] =             0; r[7] =             0; r[11] =                  0; r[15] =                                1;
+        }
+
+	/* Traslación - glTranslatef */
+        function traslacion(matriz, tx, ty, tz) {
+          let r = new Array(16);
+          r[0] = 1; r[4] = 0; r[ 8] = 0; r[12] = tx;
+          r[1] = 0; r[5] = 1; r[ 9] = 0; r[13] = ty;
+          r[2] = 0; r[6] = 0; r[10] = 1; r[14] = tz;
+          r[3] = 0; r[7] = 0; r[11] = 0; r[15] =  1;
+          multiplica(matriz, matriz, r);
+        }
+
+        /* Multiplicación de matrices de 4 x 4 */
+        function multiplica(c, a, b) {
+          let r = new Array(16);
+          let i, j, k;
+          for (i = 0; i < 4; i++){
+            for (j = 0; j < 4; j++){
+              let s = 0;
+              for (k = 0; k < 4; k++)
+                s = s + a[i + k * 4] * b[k + j * 4];
+                r[i + j * 4] = s;
+              }
+            }
+          for (i = 0; i < 16; i++)
+            c[i] = r[i];
+        }
+
+        /***************************************************************************/
+        /* Paso 4: Se define la geometría y se almacenan en los buffers de memoria.*/
+        /* Paso 5: Se renderizan los objetos                                       */
+        /***************************************************************************/
+        var indiceBuffer;
+        const inicializaCielo = gl => {
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+             1.5, -0.2, // 0
+            -1.5, -0.2, // 1
+            -1.5,  1.5, // 2
+             1.5,  1.5, // 3
+          ];
+
+          /* Los colores x c/vértice (r,g,b,a) */
+          var colores = [ 
+             0, 0, 51 / 255, 1, // 0
+             0, 0, 51 / 255, 1, // 1
+             0, 0, 51 / 255, 1, // 2
+             0, 0, 51 / 255, 1, // 3
+          ];
+
+          /* Indices */
+          var indices = [ 
+             0, 1, 2, 0, 2, 3
+          ];
+
+          /* Estrellas */
+
+          /* Estrella 1 */
+          let radio = 0.03;
+          let dx = -0.9, dy = 1.35;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          /* Estrella 2 */
+          radio = 0.025;
+          dx = 0.8; dy = 1.2;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          /* Estrella 3 */
+          radio = 0.02;
+          dx = -0.2; dy = 1.2;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          /* Estrella 4 */
+          radio = 0.03;
+          dx = 0.2; dy = 1.4;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          /* Estrella 5 */
+          radio = 0.02;
+          dx = 0.2; dy = 1.1;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          /* Estrella 6 */
+          radio = 0.02;
+          dx = -0.8; dy = 1.1;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 180; i = i + 36) {
+             let x = radio * Math.cos(i * Math.PI / 180);
+             let y = radio * Math.sin(i * Math.PI / 180);
+
+             /* V0 */
+             vertices.push(dx + x);
+             vertices.push(dy + y);
+
+             /* V1 */
+             vertices.push(dx - x);
+             vertices.push(dy - y);
+
+             /* V0 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+
+             /* V1 */
+             colores.push(25 / 255);
+             colores.push(1);
+             colores.push(1);
+             colores.push(1);
+          }
+
+          var verticeBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          var colorBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          indiceBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indiceBuffer);
+          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+        }
+
+        const dibujaCielo = gl => {
+
+          gl.enableVertexAttribArray(0);
+          gl.enableVertexAttribArray(1);
+
+          /* Dibuja el cielo */
+
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indiceBuffer);
+          gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+          /* Dibuja las estrellas */
+
+          gl.drawArrays(gl.LINES, 4, 5 * 2 * 6);
+        }
+
+        const inicializaPadre = gl => {
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+		// Brazo derecho
+		0.5, 0.0, 	// 0
+		0.5, 0.65, 	// 1
+		0.73, 0.3, 	// 2
+		
+		// Brazo izquierdo
+		0.5,0.1,	// 3
+		0.15,0.1, 	// 4
+		0.5,0.65, 	// 5
+		
+		// Pierna derecha
+		0.35,-0.485, 	// 6
+		0.35,-0.13, 	// 7
+		0.5,0.05, 	// 8
+		0.35,-0.485, 	// 9
+		0.5,0.05, 	// 10
+		0.5,-0.3, 	// 11
+		
+		// Pie derecho
+		0.43,-0.6, 	// 12
+		0.27,-0.6, 	// 13
+		0.43,-0.37, 	// 14
+		
+		// Pierna izquierda
+		0.65,-0.4, 	// 15
+		0.5,0.0,	// 16
+		0.65,0.2, 	// 17
+		
+		// Pie izquierdo
+		0.65,-0.6, 	// 18
+		0.65,-0.34, 	// 19
+		0.75,-0.47, 	// 20
+          ];
+
+          /* Los colores x c/vértice (r,g,b,a) */
+          var colores = [ 
+             // Brazo derecho
+             1, 0, 0, 1, // 0
+             1, 0, 0, 1, // 1
+             1, 0, 0, 1, // 2
+
+             // Brazo izquierdo
+             1, 1, 0, 1, // 3
+             1, 1, 0, 1, // 4
+             1, 1, 0, 1, // 5
+
+             // Pierna derecha
+             0, 51 / 255, 1, 1, // 6
+             0, 51 / 255, 1, 1, // 7
+             0, 51 / 255, 1, 1, // 8
+             0, 51 / 255, 1, 1, // 9
+             0, 51 / 255, 1, 1, // 10
+             0, 51 / 255, 1, 1, // 11
+
+             // Pie derecho
+             204 / 255, 51 / 255, 204 / 255, 1, // 12
+             204 / 255, 51 / 255, 204 / 255, 1, // 13
+             204 / 255, 51 / 255, 204 / 255, 1, // 14
+
+             // Pierna izquierda
+             1, 127 / 255, 0, 1, // 15
+             1, 127 / 255, 0, 1, // 16
+             1, 127 / 255, 0, 1, // 17
+
+             // Pie izquierdo
+             1, 127 / 255, 178 / 255, 1, // 18
+             1, 127 / 255, 178 / 255, 1, // 19
+             1, 127 / 255, 178 / 255, 1, // 20
+          ];
+
+          /* Cabeza */
+
+          // Desplazamiento (0.5, 0.78)
+          let radio = 0.1;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 360; i++) {
+             vertices.push(0.5 + radio * Math.cos(i * Math.PI / 180));
+             vertices.push(0.78 + radio * Math.sin(i * Math.PI / 180));
+
+             colores.push(127 / 255);
+             colores.push(127 / 255);
+             colores.push(76 / 255);
+             colores.push(1);
+          }
+
+          var verticeBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          var colorBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+        const dibujaPadre = gl => {
+
+          gl.enableVertexAttribArray(0);
+          gl.enableVertexAttribArray(1);
+
+          /* Dibuja el cuerpo */
+          gl.drawArrays(gl.TRIANGLES, 0, 21);
+
+          /* Dibuja la cabeza */
+          gl.drawArrays(gl.TRIANGLE_FAN, 21, 360);
+        }
+
+        const inicializaMadre = gl => {
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+		// Cuerpo
+		-0.65,-0.13, 	// 0
+		-0.65,0.22, 	// 1
+		-0.5,0.4, 	// 2
+		-0.65,-0.13, 	// 3
+		-0.5,0.4, 	// 4
+		-0.5,0.05, 	// 5
+		
+		// Brazos
+		-0.1, 0.05, 	// 6
+		-0.5, 0.05, 	// 7
+		-0.5, 0.6,	// 8
+		
+		// Piernas
+		-0.5, -0.4, 	// 9
+		-0.88,-0.4, 	// 10
+		-0.5, 0.05, 	// 11
+		
+		// Pie derecho
+		-0.38, -0.55,	// 12
+		-0.5, -0.55, 	// 13
+		-0.5, -0.35,	// 14
+		
+		// Pie izquierdo
+		-0.94, -0.58, // 15
+		-0.94,-0.4, 	// 16
+		-0.81, -0.4, 	// 17
+          ];
+
+          /* Los colores x c/vértice (r,g,b,a) */
+          var colores = [ 
+		// Cuerpo
+		51 / 255, 1, 1, 1, // 0
+		51 / 255, 1, 1, 1, // 1
+		51 / 255, 1, 1, 1, // 2
+		51 / 255, 1, 1, 1, // 3
+		51 / 255, 1, 1, 1, // 4
+		51 / 255, 1, 1, 1, // 5
+		
+		// Brazos
+		1, 102 / 255, 1, 1, // 6
+		1, 102 / 255, 1, 1, // 7
+		1, 102 / 255, 1, 1, // 8
+		
+		// Piernas
+		1, 204 / 255, 51 / 255, 1, // 9
+		1, 204 / 255, 51 / 255, 1, // 10
+		1, 204 / 255, 51 / 255, 1, // 11
+		
+		// Pie derecho
+		84 / 255, 206 / 255, 104 / 255, 1, // 12
+		84 / 255, 206 / 255, 104 / 255, 1, // 13
+		84 / 255, 206 / 255, 104 / 255, 1, // 14
+		
+		// Pie izquierdo
+		1, 158 / 255, 228 / 255, 1, // 15
+		1, 158 / 255, 228 / 255, 1, // 16
+		1, 158 / 255, 228 / 255, 1, // 17
+          ];
+
+          /* Cabeza */
+
+          // Desplazamiento (-0.5, 0.72)
+          let radio = 0.1;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 360; i++) {
+             vertices.push(-0.5 + radio * Math.cos(i * Math.PI / 180));
+             vertices.push(0.72 + radio * Math.sin(i * Math.PI / 180));
+
+             colores.push(0);
+             colores.push(127 / 255);
+             colores.push(76 / 255);
+             colores.push(1);
+          }
+
+          var verticeBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          var colorBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+        const dibujaMadre = gl => {
+
+          gl.enableVertexAttribArray(0);
+          gl.enableVertexAttribArray(1);
+
+          /* Dibuja el cuerpo */
+          gl.drawArrays(gl.TRIANGLES, 0, 18);
+
+          /* Dibuja la cabeza */
+          gl.drawArrays(gl.TRIANGLE_FAN, 18, 360);
+        }
+
+        const inicializaNiño = gl => {
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+		// Brazo derecho
+		0.07, -0.25, 	// 0
+		-0.3, -0.3, 	// 1
+		-0.05, -0.12,	// 2
+		
+		// Brazo izquierdo
+		0.07, -0.25, 	// 3
+		-0.05, -0.12, // 4
+		0.15, 0.1, 	// 5
+		
+		// Pierna derecha
+		0.07, -0.25, 	// 6
+		0.07, -0.51, 	// 7
+		-0.1, -0.51, 	// 8
+		
+		// Pie derecho
+		-0.15, -0.57, 	// 9
+		-0.15, -0.45, 	// 10
+		-0.062, -0.45,	// 11
+		
+		// Pierna izquierda
+		0.15,-0.6, 	// 12
+		0.07,-0.45, 	// 13
+		0.07,-0.25, 	// 14
+		0.15,-0.6, 	// 15
+		0.07,-0.25, 	// 16
+		0.15,-0.4, 	// 17
+		
+		// Pie izquierdo
+		0.19, -0.67, 	// 18
+		0.11, -0.67, 	// 19
+		0.11, -0.53, 	// 20
+          ];
+
+          /* Los colores x c/vértice (r,g,b,a) */
+          var colores = [ 
+		// Brazo derecho
+		1, 204 / 255, 204 / 255, 1, // 0
+		1, 204 / 255, 204 / 255, 1, // 1
+		1, 204 / 255, 204 / 255, 1, // 2
+		
+		// Brazo izquierdo
+		1, 51 / 255, 0, 1, // 3
+		1, 51 / 255, 0, 1, // 4
+		1, 51 / 255, 0, 1, // 5
+		
+		// Pierna derecha
+		127 / 255, 76 / 255, 178 / 255, 1, // 6
+		127 / 255, 76 / 255, 178 / 255, 1, // 7
+		127 / 255, 76 / 255, 178 / 255, 1, // 8
+		
+		// Pie derecho
+		25 / 255, 1, 1, 1, // 9
+		25 / 255, 1, 1, 1, // 10
+		25 / 255, 1, 1, 1, // 11
+		
+		// Pierna izquierda
+		51 / 255, 1, 1, 1, // 12
+		51 / 255, 1, 1, 1, // 13
+		51 / 255, 1, 1, 1, // 14
+		51 / 255, 1, 1, 1, // 15
+		51 / 255, 1, 1, 1, // 16
+		51 / 255, 1, 1, 1, // 17
+		
+		// Pie izquierdo
+		102 / 255, 102 / 255, 153 / 255, 1, // 18
+		102 / 255, 102 / 255, 153 / 255, 1, // 19
+		102 / 255, 102 / 255, 153 / 255, 1, // 20
+          ];
+
+          /* Cabeza */
+
+          // Desplazamiento (-0.1, -0.05)
+          let radio = 0.07;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 360; i++) {
+             vertices.push(-0.1 + radio * Math.cos(i * Math.PI / 180));
+             vertices.push(-0.05 + radio * Math.sin(i * Math.PI / 180));
+
+             colores.push(0);
+             colores.push(127 / 255);
+             colores.push(76 / 255);
+             colores.push(1);
+          }
+
+          var verticeBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          var colorBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+        const dibujaNiño = gl => {
+
+          gl.enableVertexAttribArray(0);
+          gl.enableVertexAttribArray(1);
+
+          /* Dibuja el cuerpo */
+          gl.drawArrays(gl.TRIANGLES, 0, 21);
+
+          /* Dibuja la cabeza */
+          gl.drawArrays(gl.TRIANGLE_FAN, 21, 360);
+        }
+
+        const inicializaBebe = gl => {
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+		// Cuerpo
+		-0.15, 0.12, // 0
+		-0.38, 0.44, // 1
+		-0.15, 0.44, // 2
+
+		// Envoltura
+		-0.15, 0.12, // 3
+		-0.45, 0.12, // 4
+		-0.3, 0.322, // 5
+          ];
+
+          /* Los colores x c/vértice (r,g,b,a) */
+          var colores = [ 
+		// Cuerpo
+		214 / 255.0, 102 / 255.0, 153 / 255.0, 1, // 0
+		214 / 255.0, 102 / 255.0, 153 / 255.0, 1, // 1
+		214 / 255.0, 102 / 255.0, 153 / 255.0, 1, // 2
+
+		// Envoltura
+		81 / 255.0, 228 / 255.0, 102 / 255.0, 1, // 3
+		81 / 255.0, 228 / 255.0, 102 / 255.0, 1, // 4
+		81 / 255.0, 228 / 255.0, 102 / 255.0, 1, // 5
+          ];
+
+          /* Cabeza */
+
+          // Desplazamiento (-0.25, 0.5)
+          let radio = 0.05;
+          /* Lee los vértices (x,y) y colores (r,g,b,a) */
+          for (var i = 0; i < 360; i++) {
+             vertices.push(-0.25 + radio * Math.cos(i * Math.PI / 180));
+             vertices.push(0.5 + radio * Math.sin(i * Math.PI / 180));
+
+             colores.push(0);
+             colores.push(127 / 255);
+             colores.push(76 / 255);
+             colores.push(1);
+          }
+
+          var verticeBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+          var colorBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+        const dibujaBebe = gl => {
+
+          gl.enableVertexAttribArray(0);
+          gl.enableVertexAttribArray(1);
+
+          /* Dibuja el cuerpo */
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+          /* Dibuja la cabeza */
+          gl.drawArrays(gl.TRIANGLE_FAN, 6, 360);
+        }
+
+        /***************************************************************************/
+        /* Principal                                                               */
+        /***************************************************************************/
+
+        const gl = inicia();
+        if ( gl ) {
+          compilaEnlazaLosShaders(gl)
+
+          gl.clearColor(0.5, 0.5, 0.5, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          ortho(MatrizProyeccion, -1.5, 1.5, -1.5, 1.5, -5, 5);
+          identidad(MatrizModelo);
+          gl.useProgram(programaID);
+          gl.uniformMatrix4fv(gl.getUniformLocation(programaID, "uMatrizProyeccion"), false, MatrizProyeccion);
+          gl.uniformMatrix4fv(gl.getUniformLocation(programaID, "uMatrizVistaModelo"), false, MatrizModelo);
+
+          inicializaCielo(gl);
+          dibujaCielo(gl);
+          inicializaPadre(gl);
+          dibujaPadre(gl);
+          inicializaMadre(gl);
+          dibujaMadre(gl);
+          inicializaNiño(gl);
+          dibujaNiño(gl);
+          inicializaBebe(gl);
+          dibujaBebe(gl);
+
+        }
+      </script>
+   </body>
+</html>

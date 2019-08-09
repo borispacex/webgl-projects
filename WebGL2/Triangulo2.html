@@ -1,0 +1,179 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>WebGL 2.0 Programa que despliega un Tri�ngulo</title>
+  <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+</head>
+   <body>
+      <canvas id="webglcanvas" style="border: none;" width="500" height="500"></canvas>
+      <!--
+        /***************************************************************************/
+        /* Paso 1: Se definen los c�digos shaders.                                 */
+        /***************************************************************************/
+      -->
+      <script id="vs" type="vertex">
+        #version 300 es
+        layout(location = 0) in vec2 aVertices;
+        layout(location = 1) in vec4 aColores;
+	      out vec4 vColores;
+        void main() {
+            vColores = aColores;  
+            gl_Position = vec4(aVertices, 0.0, 1.0);
+        }
+      </script>
+
+      <script id="fs" type="fragment">
+        #version 300 es
+        precision highp float;
+        in vec4 vColores;
+        out vec4 color;
+        void main() {
+            color = vColores;
+        }
+      </script>
+	
+      <script>
+
+        /***************************************************************************/
+        /* Paso 2: Se prepara el lienzo y se obtiene el contexto del WebGL.        */
+        /***************************************************************************/
+        const inicia = () => {
+          var canvas = document.getElementById("webglcanvas");
+	  var gl = canvas.getContext("webgl2");
+          if (!gl) {
+             document.write("WebGL 2.0 no est� disponible en tu navegador");
+             return null;
+          }
+
+          /* Se define la ventana de despliegue */
+          gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+          return gl;
+        }
+
+        var programaID
+
+        /***************************************************************************/
+        /* Paso 3: Se crean, compilan y enlazan los programas Shader               */
+        /***************************************************************************/
+        const compilaEnlazaLosShaders = gl => {
+
+          /* Se compila el shader de vertice */
+          var shaderDeVertice = gl.createShader(gl.VERTEX_SHADER);
+          gl.shaderSource(shaderDeVertice, document.getElementById("vs").text.trim());
+          gl.compileShader(shaderDeVertice);
+          if (!gl.getShaderParameter(shaderDeVertice, gl.COMPILE_STATUS)) {
+             console.error(gl.getShaderInfoLog(shaderDeVertice));
+          }
+
+          /* Se compila el shader de fragmento */
+          var shaderDeFragmento = gl.createShader(gl.FRAGMENT_SHADER);
+          gl.shaderSource(shaderDeFragmento, document.getElementById("fs").text.trim());
+          gl.compileShader(shaderDeFragmento);
+          if (!gl.getShaderParameter(shaderDeFragmento, gl.COMPILE_STATUS)) {
+             console.error(gl.getShaderInfoLog(shaderDeFragmento));
+          }
+
+          /* Se enlaza ambos shader */
+          programaID = gl.createProgram();
+          gl.attachShader(programaID, shaderDeVertice); 
+          gl.attachShader(programaID, shaderDeFragmento);
+          gl.linkProgram(programaID);
+          if (!gl.getProgramParameter(programaID, gl.LINK_STATUS)) {
+             console.error(gl.getProgramInfoLog(programaID));
+          }
+        }
+
+        /***************************************************************************/
+        /* Paso 4: Se define la geometr�a y se almacenan en los buffers de memoria.*/
+        /***************************************************************************/
+        const inicializaLosBuffers = gl => {
+	  /* �rea de despliegue: (-1, -1) - (1, 1) */
+          /**
+	   *        2
+           *       /\
+           *      /  \
+           *     /    \
+           *    /      \
+           *   /________\
+           *  0          1  
+           */
+
+          /* Las coordenadas cartesianas (x, y) */
+          var vertices = [
+              -.5, -.5, // 0
+               .5, -.5, // 1
+                0,  .5, // 2
+          ];
+
+          /* Los colores x c/v�rtice (r,g,b,a) */
+          var colores = [ 
+             1, 0, 0, 1, // 0
+             1, 0, 0, 1, // 1
+             1, 0, 0, 1  // 2
+          ];
+
+
+          /* Se genera un nombre (c�digo) para el buffer */ 
+          var verticeBuffer = gl.createBuffer();
+
+          /* Se asigna un nombre (c�digo) al buffer */
+          gl.bindBuffer(gl.ARRAY_BUFFER, verticeBuffer);
+         
+          /* Se transfiere los datos desde la memoria nativa al buffer de la GPU */
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+          /* Se especifica el arreglo de v�rtices */
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+          /* Se deja de asignar un nombre (c�digo) al buffer */
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+          /* Se genera un nombre (c�digo) para el buffer */ 
+          var colorBuffer = gl.createBuffer();
+
+          /* Se asigna un nombre (c�digo) al buffer */
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+         
+          /* Se transfiere los datos desde la memoria nativa al buffer de la GPU */
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colores), gl.STATIC_DRAW);
+
+          /* Se especifica el arreglo de colores */
+          gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+
+          /* Se deja de asignar un nombre (c�digo) al buffer */
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+
+        /***************************************************************************/
+        /* Paso 5: Se renderizan los objetos                                       */
+        /***************************************************************************/
+        const dibuja = gl => {
+          /* Color de fondo */
+          gl.clearColor(0.0, 1.0, 1.0, 1.0);
+         
+          /* Inicializa el buffer de color */
+          gl.clear(gl.COLOR_BUFFER_BIT);
+
+          /* Se instala el programa de shaders para utilizarlo */
+          gl.useProgram(programaID);
+
+          /* Se habilita el arreglo de los v�rtices (indice = 0) */
+          gl.enableVertexAttribArray(0);
+
+          /* Se habilita el arreglo de los colores (indice = 1) */
+          gl.enableVertexAttribArray(1);
+
+          /* Se renderiza las primitivas desde los datos del arreglo */
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+        }
+
+        const gl = inicia();
+        if ( gl ) {
+          compilaEnlazaLosShaders(gl)
+          inicializaLosBuffers(gl);
+          dibuja(gl);
+        }
+      </script>
+   </body>
+</html>
